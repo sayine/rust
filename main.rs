@@ -193,13 +193,7 @@ fn main() -> Result<(), AppError> {
     println!("Compute Capability: {}.{}", major, minor);
     println!("Toplam bellek: {} MB", device.total_memory()? / 1024 / 1024);
     
-    // Context oluştur
-    println!("CUDA context oluşturuluyor...");
-    let _context = Context::create_and_push(
-        ContextFlags::MAP_HOST | ContextFlags::SCHED_AUTO, 
-        device
-    )?;
-    println!("CUDA context oluşturuldu.");
+    // Ana thread'de context oluşturmuyoruz, her worker thread kendi context'ini oluşturacak
     
     // PTX kodunu CString'e dönüştür
     println!("PTX kodu derleniyor...");
@@ -245,6 +239,34 @@ fn main() -> Result<(), AppError> {
         
         let handle = std::thread::spawn(move || -> Result<(), AppError> {
             println!("Thread başlatıldı: {}", script.name);
+            
+            // Her thread kendi CUDA cihazını ve context'ini oluşturur
+            println!("CUDA cihazı alınıyor: {}", script.name);
+            let device = match Device::get_device(0) {
+                Ok(d) => {
+                    println!("CUDA cihazı alındı: {}", script.name);
+                    d
+                },
+                Err(e) => {
+                    println!("CUDA cihazı alınamadı: {} - {:?}", script.name, e);
+                    return Err(AppError::CudaError(e));
+                }
+            };
+            
+            println!("CUDA context oluşturuluyor: {}", script.name);
+            let _context = match Context::create_and_push(
+                ContextFlags::MAP_HOST | ContextFlags::SCHED_AUTO, 
+                device
+            ) {
+                Ok(c) => {
+                    println!("CUDA context oluşturuldu: {}", script.name);
+                    c
+                },
+                Err(e) => {
+                    println!("CUDA context oluşturulamadı: {} - {:?}", script.name, e);
+                    return Err(AppError::CudaError(e));
+                }
+            };
             
             // Her thread kendi CUDA kaynaklarını oluşturur
             println!("CUDA modülü yükleniyor: {}", script.name);
