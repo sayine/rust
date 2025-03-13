@@ -175,7 +175,7 @@ fn main() -> Result<(), AppError> {
     }
     
     // Cihaz kontrolü
-    let device_count = Device::count()?;
+    let device_count = Device::num_devices()?;
     println!("Bulunan CUDA cihazı sayısı: {}", device_count);
     
     if device_count == 0 {
@@ -187,8 +187,10 @@ fn main() -> Result<(), AppError> {
     println!("GPU: {}", device.name()?);
     
     // Cihaz özelliklerini yazdır
-    let compute_capability = device.compute_capability()?;
-    println!("Compute Capability: {}.{}", compute_capability.0, compute_capability.1);
+    use rustacuda::device::DeviceAttribute;
+    let major = device.get_attribute(DeviceAttribute::ComputeCapabilityMajor)?;
+    let minor = device.get_attribute(DeviceAttribute::ComputeCapabilityMinor)?;
+    println!("Compute Capability: {}.{}", major, minor);
     println!("Toplam bellek: {} MB", device.total_memory()? / 1024 / 1024);
     
     // Context oluştur
