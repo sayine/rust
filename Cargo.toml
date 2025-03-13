@@ -1,5 +1,5 @@
 [package]
-name = "btc_puzzle"
+name = "btcrust"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,9 +10,13 @@ num-bigint = "0.4"
 num-traits = "0.2"
 hex = "0.4"
 num_cpus = "1.15"
-lettre = { version = "0.10", features = ["smtp-transport", "tokio1-native-tls"] } 
+lettre = { version = "0.10", features = ["smtp-transport", "tokio1-native-tls"] }
+rustacuda = "0.1"
+rustacuda_core = "0.1"
+rustacuda_derive = "0.1"
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
+panic = "abort"
