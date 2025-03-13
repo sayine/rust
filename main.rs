@@ -165,17 +165,44 @@ impl From<std::io::Error> for AppError {
 
 fn main() -> Result<(), AppError> {
     // CUDA başlatma
-    rustacuda::init(CudaFlags::empty())?;
+    println!("CUDA başlatılıyor...");
+    match rustacuda::init(CudaFlags::empty()) {
+        Ok(_) => println!("CUDA başlatıldı."),
+        Err(e) => {
+            println!("CUDA başlatılamadı: {:?}", e);
+            return Err(AppError::CudaError(e));
+        }
+    }
+    
+    // Cihaz kontrolü
+    let device_count = Device::count()?;
+    println!("Bulunan CUDA cihazı sayısı: {}", device_count);
+    
+    if device_count == 0 {
+        println!("CUDA destekli GPU bulunamadı!");
+        return Err(AppError::Other("CUDA destekli GPU bulunamadı!".to_string()));
+    }
+    
     let device = Device::get_device(0)?;
     println!("GPU: {}", device.name()?);
     
+    // Cihaz özelliklerini yazdır
+    let compute_capability = device.compute_capability()?;
+    println!("Compute Capability: {}.{}", compute_capability.0, compute_capability.1);
+    println!("Toplam bellek: {} MB", device.total_memory()? / 1024 / 1024);
+    
+    // Context oluştur
+    println!("CUDA context oluşturuluyor...");
     let _context = Context::create_and_push(
         ContextFlags::MAP_HOST | ContextFlags::SCHED_AUTO, 
         device
     )?;
+    println!("CUDA context oluşturuldu.");
     
     // PTX kodunu CString'e dönüştür
+    println!("PTX kodu derleniyor...");
     let ptx_str = CString::new(PTX_SRC)?;
+    println!("PTX kodu derlendi.");
     
     let scripts = vec![
         ScriptConfig {
@@ -200,17 +227,47 @@ fn main() -> Result<(), AppError> {
     const TOTAL_THREADS: usize = (BLOCK_SIZE * NUM_BLOCKS) as usize;
     const STEP_SIZE: u64 = 1; // Her thread kaç adım ilerleyecek
     
+    println!("Kernel parametreleri:");
+    println!("BLOCK_SIZE: {}", BLOCK_SIZE);
+    println!("NUM_BLOCKS: {}", NUM_BLOCKS);
+    println!("TOTAL_THREADS: {}", TOTAL_THREADS);
+    println!("STEP_SIZE: {}", STEP_SIZE);
+    
     // Her script için ayrı bir thread başlat
     let mut handles = Vec::new();
     
+    println!("Worker thread'ler başlatılıyor...");
     for script in scripts {
         let found = Arc::clone(&found);
         let ptx_str = ptx_str.clone(); // CString cloneable
         
         let handle = std::thread::spawn(move || -> Result<(), AppError> {
+            println!("Thread başlatıldı: {}", script.name);
+            
             // Her thread kendi CUDA kaynaklarını oluşturur
-            let module = Module::load_from_string(&ptx_str)?;
-            let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
+            println!("CUDA modülü yükleniyor: {}", script.name);
+            let module = match Module::load_from_string(&ptx_str) {
+                Ok(m) => {
+                    println!("CUDA modülü yüklendi: {}", script.name);
+                    m
+                },
+                Err(e) => {
+                    println!("CUDA modülü yüklenemedi: {} - {:?}", script.name, e);
+                    return Err(AppError::CudaError(e));
+                }
+            };
+            
+            println!("CUDA stream oluşturuluyor: {}", script.name);
+            let stream = match Stream::new(StreamFlags::NON_BLOCKING, None) {
+                Ok(s) => {
+                    println!("CUDA stream oluşturuldu: {}", script.name);
+                    s
+                },
+                Err(e) => {
+                    println!("CUDA stream oluşturulamadı: {} - {:?}", script.name, e);
+                    return Err(AppError::CudaError(e));
+                }
+            };
             
             // Her thread kendi Secp256k1 nesnesini oluşturur
             let secp = Secp256k1::new();
@@ -220,9 +277,39 @@ fn main() -> Result<(), AppError> {
             let mut current_key = start_key.clone();
             
             // GPU belleği ayır
-            let mut device_private_keys = DeviceBuffer::from_slice(&vec![0u8; TOTAL_THREADS * 32])?;
-            let mut device_found_flag = DeviceBox::new(&0u8)?;
-            let mut device_found_index = DeviceBox::new(&0u8)?;
+            println!("GPU belleği ayrılıyor: {}", script.name);
+            let mut device_private_keys = match DeviceBuffer::from_slice(&vec![0u8; TOTAL_THREADS * 32]) {
+                Ok(b) => {
+                    println!("GPU belleği ayrıldı (private_keys): {}", script.name);
+                    b
+                },
+                Err(e) => {
+                    println!("GPU belleği ayrılamadı (private_keys): {} - {:?}", script.name, e);
+                    return Err(AppError::CudaError(e));
+                }
+            };
+            
+            let mut device_found_flag = match DeviceBox::new(&0u8) {
+                Ok(b) => {
+                    println!("GPU belleği ayrıldı (found_flag): {}", script.name);
+                    b
+                },
+                Err(e) => {
+                    println!("GPU belleği ayrılamadı (found_flag): {} - {:?}", script.name, e);
+                    return Err(AppError::CudaError(e));
+                }
+            };
+            
+            let mut device_found_index = match DeviceBox::new(&0u8) {
+                Ok(b) => {
+                    println!("GPU belleği ayrıldı (found_index): {}", script.name);
+                    b
+                },
+                Err(e) => {
+                    println!("GPU belleği ayrılamadı (found_index): {} - {:?}", script.name, e);
+                    return Err(AppError::CudaError(e));
+                }
+            };
             
             // Host belleği
             let mut host_private_keys = vec![0u8; TOTAL_THREADS * 32];
@@ -232,6 +319,95 @@ fn main() -> Result<(), AppError> {
             
             println!("Script {} başlatılıyor, başlangıç key: {}", script.name, script.start_key);
             
+            // İlk iterasyonu debug için ayrıntılı yapalım
+            println!("İlk iterasyon başlıyor: {}", script.name);
+            
+            // BigUint'i iki 64-bit parçaya böl
+            let bytes = current_key.to_bytes_be();
+            let padded = pad_to_32_bytes(bytes);
+            println!("Padded key: {}", hex::encode(&padded));
+            
+            // High ve low 64-bit değerleri
+            let mut key_high: u64 = 0;
+            let mut key_low: u64 = 0;
+            
+            // High 64-bit (ilk 8 byte)
+            for i in 0..8 {
+                key_high = (key_high << 8) | padded[i] as u64;
+            }
+            
+            // Low 64-bit (sonraki 8 byte)
+            for i in 8..16 {
+                key_low = (key_low << 8) | padded[i] as u64;
+            }
+            
+            println!("key_high: {:016x}, key_low: {:016x}", key_high, key_low);
+            
+            // Increment direction
+            let increment_direction = if script.increment == "plus" { 1 } else { -1 };
+            println!("increment_direction: {}", increment_direction);
+            
+            // Kernel'i çağır
+            println!("Kernel çağrılıyor: {}", script.name);
+            unsafe {
+                let module_name = CString::new("check_keys")?;
+                let function = match module.get_function(&module_name) {
+                    Ok(f) => {
+                        println!("Kernel fonksiyonu bulundu: {}", script.name);
+                        f
+                    },
+                    Err(e) => {
+                        println!("Kernel fonksiyonu bulunamadı: {} - {:?}", script.name, e);
+                        return Err(AppError::CudaError(e));
+                    }
+                };
+                
+                println!("Kernel çalıştırılıyor: {}", script.name);
+                match launch!(function<<<NUM_BLOCKS, BLOCK_SIZE, 0, stream>>>(
+                    device_private_keys.as_device_ptr(),
+                    device_found_flag.as_device_ptr(),
+                    device_found_index.as_device_ptr(),
+                    key_high,
+                    key_low,
+                    increment_direction,
+                    STEP_SIZE
+                )) {
+                    Ok(_) => println!("Kernel başarıyla çalıştırıldı: {}", script.name),
+                    Err(e) => {
+                        println!("Kernel çalıştırılamadı: {} - {:?}", script.name, e);
+                        return Err(AppError::CudaError(e));
+                    }
+                }
+            }
+            
+            // GPU işleminin bitmesini bekle
+            println!("GPU işleminin bitmesi bekleniyor: {}", script.name);
+            match stream.synchronize() {
+                Ok(_) => println!("GPU işlemi tamamlandı: {}", script.name),
+                Err(e) => {
+                    println!("GPU işlemi tamamlanamadı: {} - {:?}", script.name, e);
+                    return Err(AppError::CudaError(e));
+                }
+            }
+            
+            // Private key'leri host'a kopyala
+            println!("Private key'ler host'a kopyalanıyor: {}", script.name);
+            match device_private_keys.copy_to(&mut host_private_keys) {
+                Ok(_) => println!("Private key'ler host'a kopyalandı: {}", script.name),
+                Err(e) => {
+                    println!("Private key'ler host'a kopyalanamadı: {} - {:?}", script.name, e);
+                    return Err(AppError::CudaError(e));
+                }
+            }
+            
+            // İlk birkaç private key'i yazdır
+            println!("İlk 3 private key:");
+            for idx in 0..3 {
+                let private_key_bytes = &host_private_keys[idx * 32..(idx + 1) * 32];
+                println!("Key {}: {}", idx, hex::encode(private_key_bytes));
+            }
+            
+            // Ana döngü
             while !found.load(Ordering::Relaxed) {
                 iterations += 1;
                 
@@ -343,9 +519,16 @@ fn main() -> Result<(), AppError> {
     }
     
     // Tüm thread'lerin tamamlanmasını bekle
-    for handle in handles {
-        if let Err(e) = handle.join() {
-            eprintln!("Thread join hatası: {:?}", e);
+    println!("Ana thread, worker thread'lerin tamamlanmasını bekliyor...");
+    for (i, handle) in handles.into_iter().enumerate() {
+        match handle.join() {
+            Ok(result) => {
+                match result {
+                    Ok(_) => println!("Thread {} başarıyla tamamlandı", i),
+                    Err(e) => println!("Thread {} hata ile tamamlandı: {:?}", i, e),
+                }
+            },
+            Err(e) => eprintln!("Thread {} join hatası: {:?}", i, e),
         }
     }
     
