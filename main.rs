@@ -193,7 +193,6 @@ fn main() -> Result<(), AppError> {
     ];
     
     let found = Arc::new(AtomicBool::new(false));
-    let secp = Secp256k1::new();
     
     // Kernel parametreleri
     const BLOCK_SIZE: u32 = 256;
@@ -213,6 +212,9 @@ fn main() -> Result<(), AppError> {
             let module = Module::load_from_string(&ptx_str)?;
             let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
             
+            // Her thread kendi Secp256k1 nesnesini oluşturur
+            let secp = Secp256k1::new();
+            
             let mut counter = 0;
             let start_key = BigUint::from_str_radix(&script.start_key, 16).unwrap();
             let mut current_key = start_key.clone();
@@ -224,8 +226,6 @@ fn main() -> Result<(), AppError> {
             
             // Host belleği
             let mut host_private_keys = vec![0u8; TOTAL_THREADS * 32];
-            let mut host_found_flag = 0u8;
-            let mut host_found_index = 0u8;
             
             let start_time = std::time::Instant::now();
             let mut iterations = 0;
