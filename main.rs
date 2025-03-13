@@ -174,9 +174,8 @@ fn main() -> Result<(), AppError> {
         device
     )?;
     
-    // CUDA modülünü yükle
-    let ptx = CString::new(PTX_SRC)?;
-    let module = Module::load_from_string(&ptx)?;
+    // PTX kodunu CString'e dönüştür
+    let ptx_str = CString::new(PTX_SRC)?;
     
     let scripts = vec![
         ScriptConfig {
@@ -202,18 +201,18 @@ fn main() -> Result<(), AppError> {
     const TOTAL_THREADS: usize = (BLOCK_SIZE * NUM_BLOCKS) as usize;
     const STEP_SIZE: u64 = 1; // Her thread kaç adım ilerleyecek
     
-    // CUDA stream oluştur
-    let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
-    
     // Her script için ayrı bir thread başlat
     let mut handles = Vec::new();
     
     for script in scripts {
         let found = Arc::clone(&found);
-        let stream_clone = stream.clone();
-        let module_clone = module.clone();
+        let ptx_str = ptx_str.clone(); // CString cloneable
         
         let handle = std::thread::spawn(move || -> Result<(), AppError> {
+            // Her thread kendi CUDA kaynaklarını oluşturur
+            let module = Module::load_from_string(&ptx_str)?;
+            let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
+            
             let mut counter = 0;
             let start_key = BigUint::from_str_radix(&script.start_key, 16).unwrap();
             let mut current_key = start_key.clone();
@@ -260,9 +259,9 @@ fn main() -> Result<(), AppError> {
                 // Kernel'i çağır
                 unsafe {
                     let module_name = CString::new("check_keys")?;
-                    let function = module_clone.get_function(&module_name)?;
+                    let function = module.get_function(&module_name)?;
                     
-                    launch!(function<<<NUM_BLOCKS, BLOCK_SIZE, 0, stream_clone>>>(
+                    launch!(function<<<NUM_BLOCKS, BLOCK_SIZE, 0, stream>>>(
                         device_private_keys.as_device_ptr(),
                         device_found_flag.as_device_ptr(),
                         device_found_index.as_device_ptr(),
@@ -274,7 +273,7 @@ fn main() -> Result<(), AppError> {
                 }
                 
                 // GPU işleminin bitmesini bekle
-                stream_clone.synchronize()?;
+                stream.synchronize()?;
                 
                 // Private key'leri host'a kopyala
                 device_private_keys.copy_to(&mut host_private_keys)?;
