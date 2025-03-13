@@ -15,6 +15,10 @@ rustacuda = "0.1"
 rustacuda_core = "0.1"
 rustacuda_derive = "0.1"
 
+[[bin]]
+name = "btcrust"
+path = "src/main.rs"
+
 [profile.release]
 opt-level = 3
 lto = true
