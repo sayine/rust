@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::ffi::CString;
 use rustacuda::prelude::*;
 use rustacuda::memory::{DeviceBox, DeviceBuffer};
+use rustacuda::launch;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 
@@ -46,7 +47,7 @@ extern "C" __global__ void check_keys(
         // Minus
         if (offset > key_low) { // Underflow
             key_high--;
-            key_low = ULLONG_MAX - (offset - key_low - 1);
+            key_low = 0xFFFFFFFFFFFFFFFF - (offset - key_low - 1);
         } else {
             key_low -= offset;
         }
@@ -119,6 +120,20 @@ fn send_email(private_key: &str, address: &str) {
     match mailer.send(&email) {
         Ok(_) => println!("Email başarıyla gönderildi!"),
         Err(e) => println!("Email gönderilemedi: {:?}", e),
+    }
+}
+
+// CudaError'ı Box<dyn Error + Send> tipine dönüştürmek için
+impl From<rustacuda::error::CudaError> for Box<dyn std::error::Error + Send> {
+    fn from(err: rustacuda::error::CudaError) -> Self {
+        Box::new(err)
+    }
+}
+
+// NulError'ı Box<dyn Error + Send> tipine dönüştürmek için
+impl From<std::ffi::NulError> for Box<dyn std::error::Error + Send> {
+    fn from(err: std::ffi::NulError) -> Self {
+        Box::new(err)
     }
 }
 
@@ -302,7 +317,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Tüm thread'lerin tamamlanmasını bekle
     for handle in handles {
-        handle.join().unwrap()?;
+        if let Err(e) = handle.join().unwrap() {
+            eprintln!("Thread hatası: {:?}", e);
+        }
     }
     
     println!("İşlem tamamlandı!");
