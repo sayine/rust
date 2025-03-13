@@ -123,21 +123,47 @@ fn send_email(private_key: &str, address: &str) {
     }
 }
 
-// CudaError'ı Box<dyn Error + Send> tipine dönüştürmek için
-impl From<rustacuda::error::CudaError> for Box<dyn std::error::Error + Send> {
+// Özel hata tipi
+#[derive(Debug)]
+enum AppError {
+    CudaError(rustacuda::error::CudaError),
+    NulError(std::ffi::NulError),
+    IoError(std::io::Error),
+    Other(String),
+}
+
+impl std::fmt::Display for AppError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AppError::CudaError(e) => write!(f, "CUDA hatası: {}", e),
+            AppError::NulError(e) => write!(f, "Nul hatası: {}", e),
+            AppError::IoError(e) => write!(f, "IO hatası: {}", e),
+            AppError::Other(s) => write!(f, "Diğer hata: {}", s),
+        }
+    }
+}
+
+impl std::error::Error for AppError {}
+
+impl From<rustacuda::error::CudaError> for AppError {
     fn from(err: rustacuda::error::CudaError) -> Self {
-        Box::new(err)
+        AppError::CudaError(err)
     }
 }
 
-// NulError'ı Box<dyn Error + Send> tipine dönüştürmek için
-impl From<std::ffi::NulError> for Box<dyn std::error::Error + Send> {
+impl From<std::ffi::NulError> for AppError {
     fn from(err: std::ffi::NulError) -> Self {
-        Box::new(err)
+        AppError::NulError(err)
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+impl From<std::io::Error> for AppError {
+    fn from(err: std::io::Error) -> Self {
+        AppError::IoError(err)
+    }
+}
+
+fn main() -> Result<(), AppError> {
     // CUDA başlatma
     rustacuda::init(CudaFlags::empty())?;
     let device = Device::get_device(0)?;
@@ -184,8 +210,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     for script in scripts {
         let found = Arc::clone(&found);
+        let stream_clone = stream.clone();
+        let module_clone = module.clone();
         
-        let handle = std::thread::spawn(move || -> Result<(), Box<dyn std::error::Error + Send>> {
+        let handle = std::thread::spawn(move || -> Result<(), AppError> {
             let mut counter = 0;
             let start_key = BigUint::from_str_radix(&script.start_key, 16).unwrap();
             let mut current_key = start_key.clone();
@@ -232,9 +260,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Kernel'i çağır
                 unsafe {
                     let module_name = CString::new("check_keys")?;
-                    let function = module.get_function(&module_name)?;
+                    let function = module_clone.get_function(&module_name)?;
                     
-                    launch!(function<<<NUM_BLOCKS, BLOCK_SIZE, 0, stream>>>(
+                    launch!(function<<<NUM_BLOCKS, BLOCK_SIZE, 0, stream_clone>>>(
                         device_private_keys.as_device_ptr(),
                         device_found_flag.as_device_ptr(),
                         device_found_index.as_device_ptr(),
@@ -246,7 +274,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 
                 // GPU işleminin bitmesini bekle
-                stream.synchronize()?;
+                stream_clone.synchronize()?;
                 
                 // Private key'leri host'a kopyala
                 device_private_keys.copy_to(&mut host_private_keys)?;
@@ -317,8 +345,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Tüm thread'lerin tamamlanmasını bekle
     for handle in handles {
-        if let Err(e) = handle.join().unwrap() {
-            eprintln!("Thread hatası: {:?}", e);
+        if let Err(e) = handle.join() {
+            eprintln!("Thread join hatası: {:?}", e);
         }
     }
     
