@@ -1,0 +1,18 @@
+[package]
+name = "btc_puzzle"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitcoin = "0.30.0"
+rayon = "1.7"
+num-bigint = "0.4"
+num-traits = "0.2"
+hex = "0.4"
+num_cpus = "1.15"
+lettre = { version = "0.10", features = ["smtp-transport", "tokio1-native-tls"] } 
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
