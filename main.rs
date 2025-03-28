@@ -256,14 +256,14 @@ fn main() -> Result<(), AppError> {
     let scripts = vec![
         ScriptConfig {
             name: String::from("67M"),
-            start_key: String::from("9047cd2e3a3d7629e"),
-            target_address: String::from("1MVDYgVaSN6iKKEsbzRUAYFrYJadLYZvvZ"),
+            start_key: String::from("7ffffff"),
+            target_address: String::from("128z5d7nN7PkCuX5qoA4Ys6pmxUYnEy86k"),
             increment: String::from("minus"),
         },
         ScriptConfig {
             name: String::from("67P"),
-            start_key: String::from("9047cd2f2670ff81f"),
-            target_address: String::from("1MVDYgVaSN6iKKEsbzRUAYFrYJadLYZvvZ"),
+            start_key: String::from("4000000"),
+            target_address: String::from("128z5d7nN7PkCuX5qoA4Ys6pmxUYnEy86k"), // 1MVDYgVaSN6iKKEsbzRUAYFrYJadLYZvvZ
             increment: String::from("plus"),
         },
     ];
